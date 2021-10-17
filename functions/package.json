@@ -6,19 +6,23 @@
     "shell": "npm run build && firebase functions:shell",
     "start": "npm run shell",
     "deploy": "firebase deploy --only functions",
-    "logs": "firebase functions:log"
+    "logs": "firebase functions:log",
+    "get-config": "firebase functions:config:get",
+    "set-config": "firebase functions:config:set"
   },
   "engines": {
     "node": "14"
   },
   "main": "lib/index.js",
   "dependencies": {
-    "firebase-admin": "^9.8.0",
-    "firebase-functions": "^3.14.1"
+    "axios": "^0.23.0",
+    "firebase-admin": "^9.12.0",
+    "firebase-functions": "^3.15.7",
+    "telegraf": "^4.4.2"
   },
   "devDependencies": {
-    "typescript": "^3.8.0",
-    "firebase-functions-test": "^0.2.0"
+    "firebase-functions-test": "^0.2.0",
+    "typescript": "^3.8.0"
   },
   "private": true
 }

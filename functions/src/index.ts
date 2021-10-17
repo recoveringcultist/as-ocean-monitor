@@ -1,9 +1,19 @@
 import * as functions from "firebase-functions";
+import { Request, Response } from "express";
+import { createBot } from "./bot";
+import { Telegraf } from "telegraf";
 
-// // Start writing Firebase Functions
-// // https://firebase.google.com/docs/functions/typescript
-//
-// export const helloWorld = functions.https.onRequest((request, response) => {
-//   functions.logger.info("Hello logs!", {structuredData: true});
-//   response.send("Hello from Firebase!");
-// });
+let bot: Telegraf;
+createBot().then((b) => {
+  bot = b;
+});
+
+export const botFunction = functions.https.onRequest(
+  async (req: Request, res: Response) => {
+    try {
+      await bot.handleUpdate(req.body);
+    } finally {
+      res.status(200).end();
+    }
+  }
+);
