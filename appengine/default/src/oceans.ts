@@ -30,18 +30,22 @@ export async function getOceans(): Promise<Ocean[]> {
 }
 
 export async function getOceanABI() {
-  let filepath = "./abi/oceans_abi.json";
-  let rawData = await fs.readFile(filepath);
-  let abi = JSON.parse(rawData.toString());
-  return abi;
+  let key = "oceans_abi";
+  return cacheABI(key);
 }
 
 export async function getTokenABI() {
-  // let filepath = path.join(__dirname, "abi/token_abi.json");
-  let filepath = "./abi/token_abi.json";
-  console.log(filepath);
+  let key = "token_abi";
+  return cacheABI(key);
+}
+
+async function cacheABI(key) {
+  if (abis[key]) return abis[key];
+
+  let filepath = `./abi/${key}.json`;
   let rawData = await fs.readFile(filepath);
   let abi = JSON.parse(rawData.toString());
+  abis[key] = abi;
   return abi;
 }
 
