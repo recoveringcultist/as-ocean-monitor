@@ -30,11 +30,9 @@ export async function getOceans(): Promise<Ocean[]> {
 }
 
 export async function getOceanABI() {
-  // let filepath = path.join(__dirname, "abi/oceans_abi.json");
   let filepath = "./abi/oceans_abi.json";
-  console.log(filepath);
   let rawData = await fs.readFile(filepath);
-  let abi = rawData.toJSON();
+  let abi = JSON.parse(rawData.toString());
   return abi;
 }
 
@@ -43,7 +41,7 @@ export async function getTokenABI() {
   let filepath = "./abi/token_abi.json";
   console.log(filepath);
   let rawData = await fs.readFile(filepath);
-  let abi = rawData.toJSON();
+  let abi = JSON.parse(rawData.toString());
   return abi;
 }
 

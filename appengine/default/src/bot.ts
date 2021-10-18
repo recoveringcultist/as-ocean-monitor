@@ -127,9 +127,10 @@ APR: ${formatNumber(APR)}%`;
 };
 
 const makeHandler = (f: (ctx) => any): ((ctx) => any) => {
-  return (ctx) => {
+  return async (ctx) => {
     try {
-      return f(ctx);
+      const ret = await f(ctx);
+      return ret;
     } catch (e) {
       return reportError(ctx, e, "handler error " + f.name);
     }
