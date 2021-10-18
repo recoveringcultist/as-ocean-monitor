@@ -90,7 +90,14 @@ export async function getTokenPrice(address: string): Promise<number> {
       }
   }`;
   let data: any = await axios.post(SUBGRAPH_API_URL, { query: query });
-  return parseFloat(data.data.data.token.derivedUSD);
+
+  try {
+    let price = parseFloat(data.data.data.token.derivedUSD);
+    return price;
+  } catch (e) {
+    console.log(`no token returned from subgraph for ${address}`);
+    return 0;
+  }
 }
 
 export async function getBnbPrice(): Promise<number> {
@@ -127,7 +134,7 @@ export async function getOceanInfo(ocean: Ocean) {
   let TVL = totalStaked * depositTokenPrice;
   let blocksPerYear = 28800 * 365;
   let dollarsPerBlock = rewardPerBlock * rewardTokenPrice;
-  let APR = ((dollarsPerBlock * blocksPerYear) / TVL) * 100;
+  let APR = TVL > 0 ? ((dollarsPerBlock * blocksPerYear) / TVL) * 100 : 0;
 
   const info: OceanInfo = {
     tvl: TVL,
