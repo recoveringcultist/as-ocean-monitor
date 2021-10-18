@@ -19,6 +19,14 @@ export interface Ocean {
   active: boolean;
 }
 
+export interface OceanInfo {
+  tvl: number;
+  apr: number;
+  totalStaked: number;
+  depositTokenPrice: number;
+  rewardTokenPrice: number;
+}
+
 const w3 = new Web3("https://bsc-dataseed.binance.org");
 const abis: any = {};
 
@@ -90,4 +98,43 @@ export async function getBnbPrice(): Promise<number> {
     "https://api.coingecko.com/api/v3/simple/price?ids=binancecoin&vs_currencies=usd"
   );
   return res.data.binancecoin.usd;
+}
+
+export async function getOceanInfo(ocean: Ocean) {
+  // const oceans = await getOceans();
+
+  // if (which < 0 || which >= oceans.length) {
+  //   throw new Error("invalid ocean id");
+  // }
+
+  // const ocean = oceans[which];
+  const oceanContract = await getOceanContract(ocean.address);
+  const depositToken = await getTokenContract(ocean.depositTokenAddress);
+  let totalStakedRes = await depositToken.methods
+    .balanceOf(ocean.address)
+    .call();
+  let totalStaked = parseFloat(Web3.utils.fromWei(totalStakedRes, "ether"));
+  let rewardPerBlockRes = await oceanContract.methods.rewardPerBlock().call();
+  let rewardPerBlock = parseFloat(
+    Web3.utils.fromWei(rewardPerBlockRes, "ether")
+  );
+  let depositTokenPrice = await getTokenPrice(
+    ocean.depositTokenAddress.toLowerCase()
+  );
+  let rewardTokenPrice = await getTokenPrice(
+    ocean.earningTokenAddress.toLowerCase()
+  );
+  let TVL = totalStaked * depositTokenPrice;
+  let blocksPerYear = 28800 * 365;
+  let dollarsPerBlock = rewardPerBlock * rewardTokenPrice;
+  let APR = ((dollarsPerBlock * blocksPerYear) / TVL) * 100;
+
+  const info: OceanInfo = {
+    tvl: TVL,
+    apr: APR,
+    totalStaked,
+    depositTokenPrice,
+    rewardTokenPrice,
+  };
+  return info;
 }

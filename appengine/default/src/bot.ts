@@ -2,6 +2,7 @@ import { Context, Markup, Telegraf } from "telegraf";
 import Web3 from "web3";
 import {
   getOceanContract,
+  getOceanInfo,
   getOceans,
   getTokenContract,
   getTokenPrice,
@@ -74,8 +75,11 @@ const listOceans = async (ctx: Context) => {
   let msg: string = `there are ${numOceans} oceans, which do you want info on?\n`;
   for (let i = 0; i < oceans.length; i++) {
     let o = oceans[i];
+
+    let info = await getOceanInfo(o);
+
     buttons.push(`/o${i}`);
-    msg += `/o${i} stake ${o.depositToken} for ${o.earningToken}\n`;
+    msg += `/o${i} stake ${o.depositToken} for ${o.earningToken}: ${info.apr}% APR\n`;
   }
 
   return ctx.reply(
@@ -93,35 +97,38 @@ const oceanInfo = async (ctx) => {
   }
 
   const ocean = oceans[which];
-  const oceanContract = await getOceanContract(ocean.address);
-  const depositToken = await getTokenContract(ocean.depositTokenAddress);
-  let totalStakedRes = await depositToken.methods
-    .balanceOf(ocean.address)
-    .call();
-  let totalStaked = parseFloat(Web3.utils.fromWei(totalStakedRes, "ether"));
-  let rewardPerBlockRes = await oceanContract.methods.rewardPerBlock().call();
-  let rewardPerBlock = parseFloat(
-    Web3.utils.fromWei(rewardPerBlockRes, "ether")
-  );
-  let depositTokenPrice = await getTokenPrice(
-    ocean.depositTokenAddress.toLowerCase()
-  );
-  let rewardTokenPrice = await getTokenPrice(
-    ocean.earningTokenAddress.toLowerCase()
-  );
-  let TVL = totalStaked * depositTokenPrice;
-  let blocksPerYear = 28800 * 365;
-  let dollarsPerBlock = rewardPerBlock * rewardTokenPrice;
-  let APR = ((dollarsPerBlock * blocksPerYear) / TVL) * 100;
+
+  const info = await getOceanInfo(ocean);
+
+  // const oceanContract = await getOceanContract(ocean.address);
+  // const depositToken = await getTokenContract(ocean.depositTokenAddress);
+  // let totalStakedRes = await depositToken.methods
+  //   .balanceOf(ocean.address)
+  //   .call();
+  // let totalStaked = parseFloat(Web3.utils.fromWei(totalStakedRes, "ether"));
+  // let rewardPerBlockRes = await oceanContract.methods.rewardPerBlock().call();
+  // let rewardPerBlock = parseFloat(
+  //   Web3.utils.fromWei(rewardPerBlockRes, "ether")
+  // );
+  // let depositTokenPrice = await getTokenPrice(
+  //   ocean.depositTokenAddress.toLowerCase()
+  // );
+  // let rewardTokenPrice = await getTokenPrice(
+  //   ocean.earningTokenAddress.toLowerCase()
+  // );
+  // let TVL = totalStaked * depositTokenPrice;
+  // let blocksPerYear = 28800 * 365;
+  // let dollarsPerBlock = rewardPerBlock * rewardTokenPrice;
+  // let APR = ((dollarsPerBlock * blocksPerYear) / TVL) * 100;
 
   let msg = `ocean ${which}, stake ${ocean.depositToken} for ${
     ocean.earningToken
   }:
-Total staked: ${formatNumber(totalStaked)} ${ocean.depositToken}
-${ocean.depositToken} price: $${depositTokenPrice.toFixed(4)}
-${ocean.earningToken} price: $${rewardTokenPrice.toFixed(4)}
-TVL: $${formatNumber(TVL)}
-APR: ${formatNumber(APR)}%`;
+Total staked: ${formatNumber(info.totalStaked)} ${ocean.depositToken}
+${ocean.depositToken} price: $${info.depositTokenPrice.toFixed(4)}
+${ocean.earningToken} price: $${info.rewardTokenPrice.toFixed(4)}
+TVL: $${formatNumber(info.tvl)}
+APR: ${formatNumber(info.tvl)}%`;
 
   return ctx.reply(msg);
 };
@@ -139,7 +146,7 @@ const makeHandler = (f: (ctx) => any): ((ctx) => any) => {
 
 function reportError(ctx, e, msg) {
   console.error(e);
-  return ctx.reply(msg + ": " + e.toString());
+  return ctx.reply(msg + ": " + e.toString() + "\n" + e.stack);
 }
 
 function formatNumber(n: number | string) {
