@@ -10,6 +10,9 @@ import { oceans_abi } from "./oceans_abi";
 
 export const OCEAN_API = "https://autoshark.finance/.netlify/functions/oceans";
 
+export const SUBGRAPH_API_URL: string =
+  "https://api.thegraph.com/subgraphs/name/autoshark-finance/exchange-v1";
+
 export interface Ocean {
   name: string;
   depositToken: string;
@@ -23,7 +26,8 @@ export interface Ocean {
 export async function getOceans(): Promise<Ocean[]> {
   let res = await axios.get(OCEAN_API);
   const oceans: Ocean[] = (res.data as any).data;
-  return oceans;
+  let activeOceans = oceans.filter((o) => o.active);
+  return activeOceans;
 }
 
 export function getOceanABI() {
@@ -54,4 +58,33 @@ export async function getOceanContract(address: string) {
 export async function getTokenContract(address: string) {
   let abi = getTokenABI();
   return getContract(abi, address);
+}
+
+export async function getTokenPrice(address: string): Promise<number> {
+  var query: String = `
+  query Token {
+      token(id: "${address}") {
+          id
+          symbol
+          name
+          decimals
+          totalSupply
+          tradeVolume
+          tradeVolumeUSD
+          untrackedVolumeUSD
+          txCount
+          totalLiquidity
+          derivedETH
+          derivedUSD
+      }
+  }`;
+  let data: any = await axios.post(SUBGRAPH_API_URL, { query: query });
+  return parseFloat(data.data.data.token.derivedUSD);
+}
+
+export async function getBnbPrice(): Promise<number> {
+  let res: any = await axios.get(
+    "https://api.coingecko.com/api/v3/simple/price?ids=binancecoin&vs_currencies=usd"
+  );
+  return res.data.binancecoin.usd;
 }

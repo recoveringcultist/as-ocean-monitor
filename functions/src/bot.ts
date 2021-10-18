@@ -1,6 +1,15 @@
 import * as functions from "firebase-functions";
+import { instance } from "firebase-functions/v1/database";
 import { Context, Markup, Telegraf } from "telegraf";
-import { getOceanContract, getOceans, getTokenContract } from "./oceans";
+import Web3 from "web3";
+import {
+  getOceanContract,
+  getOceans,
+  getTokenContract,
+  getTokenPrice,
+} from "./oceans";
+
+const LOCALE_OPTIONS = { minimumFractionDigits: 2, maximumFractionDigits: 2 };
 
 export async function createBot() {
   const { FUNCTION_NAME, PROJECT_ID, REGION } = process.env;
@@ -21,10 +30,10 @@ export async function createBot() {
   functions.logger.info(`result of setting up webhook: ${result}`);
 
   bot.start((ctx) => ctx.reply("Welcome"));
-  bot.help((ctx) => ctx.reply("help text goes here"));
+  bot.help((ctx) => ctx.reply("try sending command /oceans"));
   bot.command("hello", (ctx) => ctx.reply("Hello, friend!"));
   bot.command("oceans", makeHandler(listOceans));
-  bot.hears(/\/o (\d+)/, makeHandler(oceanInfo));
+  bot.hears(/\/o(\d+)/, makeHandler(oceanInfo));
   bot.hears("hi", (ctx) => ctx.reply("Hey there"));
   bot.launch();
 
@@ -45,8 +54,8 @@ const listOceans = async (ctx: Context) => {
   let msg: string = `there are ${numOceans} oceans, which do you want info on?\n`;
   for (let i = 0; i < oceans.length; i++) {
     let o = oceans[i];
-    buttons.push(`/o ${i}`);
-    msg += `${i} stake ${o.depositToken} for ${o.earningToken}\n`;
+    buttons.push(`/o${i}`);
+    msg += `/o${i} stake ${o.depositToken} for ${o.earningToken}\n`;
   }
 
   return ctx.reply(
@@ -63,15 +72,36 @@ const oceanInfo = async (ctx) => {
     return ctx.reply("invalid ocean id");
   }
 
-  const oceanData = oceans[which];
-  // const oceanContract = await getOceanContract(oceanData.address);
-  const tokenContract = await getTokenContract(oceanData.depositTokenAddress);
-  let totalStaked = await tokenContract.methods
-    .balanceOf(oceanData.address)
+  const ocean = oceans[which];
+  const oceanContract = await getOceanContract(ocean.address);
+  const depositToken = await getTokenContract(ocean.depositTokenAddress);
+  let totalStakedRes = await depositToken.methods
+    .balanceOf(ocean.address)
     .call();
+  let totalStaked = parseFloat(Web3.utils.fromWei(totalStakedRes, "ether"));
+  let rewardPerBlockRes = await oceanContract.methods.rewardPerBlock().call();
+  let rewardPerBlock = parseFloat(
+    Web3.utils.fromWei(rewardPerBlockRes, "ether")
+  );
+  let depositTokenPrice = await getTokenPrice(
+    ocean.depositTokenAddress.toLowerCase()
+  );
+  let rewardTokenPrice = await getTokenPrice(
+    ocean.earningTokenAddress.toLowerCase()
+  );
+  let TVL = totalStaked * depositTokenPrice;
+  let blocksPerYear = 28800 * 365;
+  let dollarsPerBlock = rewardPerBlock * rewardTokenPrice;
+  let APR = ((dollarsPerBlock * blocksPerYear) / TVL) * 100;
 
-  let msg = `ocean ${which}, stake ${oceanData.depositToken} for ${oceanData.earningToken}:
-total staked ${totalStaked}`;
+  let msg = `ocean ${which}, stake ${ocean.depositToken} for ${
+    ocean.earningToken
+  }:
+Total staked: ${formatNumber(totalStaked)} ${ocean.depositToken}
+${ocean.depositToken} price: $${depositTokenPrice.toFixed(4)}
+${ocean.earningToken} price: $${rewardTokenPrice.toFixed(4)}
+TVL: $${formatNumber(TVL)}
+APR: ${formatNumber(APR)}%`;
 
   return ctx.reply(msg);
 };
@@ -89,4 +119,9 @@ const makeHandler = (f: (ctx) => any): ((ctx) => any) => {
 function reportError(ctx, e, msg) {
   functions.logger.error(e);
   return ctx.reply(msg + ": " + e.toString());
+}
+
+function formatNumber(n: number | string) {
+  if (typeof n === "string") n = parseFloat(n);
+  return n.toLocaleString(undefined, LOCALE_OPTIONS);
 }
