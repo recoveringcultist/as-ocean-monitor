@@ -1,12 +1,7 @@
+import { info } from "console";
 import { Context, Markup, Telegraf } from "telegraf";
 import Web3 from "web3";
-import {
-  getOceanContract,
-  getOceanInfo,
-  getOceans,
-  getTokenContract,
-  getTokenPrice,
-} from "./oceans";
+import { getOceanInfos, OceanInfo } from "./oceans";
 
 const LOCALE_OPTIONS = { minimumFractionDigits: 2, maximumFractionDigits: 2 };
 const {
@@ -66,21 +61,16 @@ export async function createBot() {
 }
 
 const listOceans = async (ctx: Context) => {
-  const oceans = await getOceans();
-  // {"name":"JAWS","depositToken":"JAWS","earningToken":"GUARD","address":"0xF50d7a5066D74c67361176bEddfA0A5379a5d429","depositTokenAddress":"0xdD97AB35e3C0820215bc85a395e13671d84CCBa2","earningTokenAddress":"0xF606bd19b1E61574ED625d9ea96C841D4E247A32","active":true}
+  let infos: OceanInfo[] = await getOceanInfos(true);
 
-  let numOceans = oceans.length;
-
+  let numOceans = infos.length;
   const buttons: any[] = [];
   let msg: string = `there are ${numOceans} active oceans, which do you want info on?\n`;
-  for (let i = 0; i < oceans.length; i++) {
-    let o = oceans[i];
-
-    let info = await getOceanInfo(o);
-
+  for (let i = 0; i < infos.length; i++) {
+    let info = infos[i];
     buttons.push(`/o${i}`);
-    msg += `/o${i} stake ${o.depositToken} for ${
-      o.earningToken
+    msg += `/o${i} stake ${info.depositToken} for ${
+      info.earningToken
     }: ${formatNumber(info.apr)}% APR\n`;
   }
 
@@ -91,44 +81,25 @@ const listOceans = async (ctx: Context) => {
 };
 
 const oceanInfo = async (ctx) => {
-  const oceans = await getOceans();
+  const oceans = await getOceanInfos(true);
 
   const which = parseInt(ctx.match[1]);
   if (which < 0 || which >= oceans.length) {
     return ctx.reply("invalid ocean id");
   }
 
-  const ocean = oceans[which];
+  // const ocean = oceans[which];
 
-  const info = await getOceanInfo(ocean);
+  // const info = await getOceanInfo(ocean);
 
-  // const oceanContract = await getOceanContract(ocean.address);
-  // const depositToken = await getTokenContract(ocean.depositTokenAddress);
-  // let totalStakedRes = await depositToken.methods
-  //   .balanceOf(ocean.address)
-  //   .call();
-  // let totalStaked = parseFloat(Web3.utils.fromWei(totalStakedRes, "ether"));
-  // let rewardPerBlockRes = await oceanContract.methods.rewardPerBlock().call();
-  // let rewardPerBlock = parseFloat(
-  //   Web3.utils.fromWei(rewardPerBlockRes, "ether")
-  // );
-  // let depositTokenPrice = await getTokenPrice(
-  //   ocean.depositTokenAddress.toLowerCase()
-  // );
-  // let rewardTokenPrice = await getTokenPrice(
-  //   ocean.earningTokenAddress.toLowerCase()
-  // );
-  // let TVL = totalStaked * depositTokenPrice;
-  // let blocksPerYear = 28800 * 365;
-  // let dollarsPerBlock = rewardPerBlock * rewardTokenPrice;
-  // let APR = ((dollarsPerBlock * blocksPerYear) / TVL) * 100;
+  const info = oceans[which];
 
-  let msg = `ocean ${which}, stake ${ocean.depositToken} for ${
-    ocean.earningToken
+  let msg = `ocean ${which}, stake ${info.depositToken} for ${
+    info.earningToken
   }:
-Total staked: ${formatNumber(info.totalStaked)} ${ocean.depositToken}
-${ocean.depositToken} price: $${info.depositTokenPrice.toFixed(4)}
-${ocean.earningToken} price: $${info.rewardTokenPrice.toFixed(4)}
+Total staked: ${formatNumber(info.totalStaked)} ${info.depositToken}
+${info.depositToken} price: $${info.depositTokenPrice.toFixed(4)}
+${info.earningToken} price: $${info.rewardTokenPrice.toFixed(4)}
 TVL: $${formatNumber(info.tvl)}
 APR: ${formatNumber(info.apr)}%`;
 
