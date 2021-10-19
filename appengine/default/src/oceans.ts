@@ -9,7 +9,10 @@ export const OCEAN_API = "https://autoshark.finance/.netlify/functions/oceans";
 export const SUBGRAPH_API_URL: string =
   "https://api.thegraph.com/subgraphs/name/autoshark-finance/exchange-v1";
 
-export interface Ocean {
+/**
+ * ocean api result
+ */
+export interface OceanBase {
   name: string;
   depositToken: string;
   earningToken: string;
@@ -19,6 +22,17 @@ export interface Ocean {
   active: boolean;
 }
 
+/**
+ * ocean with contract additions
+ */
+export interface Ocean extends OceanBase {
+  bonusEndBlock: number;
+  rewardPerBlock: number;
+}
+
+/**
+ * extra computed ocean information
+ */
 export interface OceanInfo {
   tvl: number;
   apr: number;
@@ -31,10 +45,37 @@ const w3 = new Web3("https://bsc-dataseed.binance.org");
 const abis: any = {};
 
 export async function getOceans(): Promise<Ocean[]> {
+  // grab base data from api
   let res = await axios.get(OCEAN_API);
-  const oceans: Ocean[] = (res.data as any).data;
-  let activeOceans = oceans.filter((o) => o.active);
-  return activeOceans;
+  const oceans: OceanBase[] = (res.data as any).data;
+  let filtered = oceans.filter((o) => o.active);
+
+  // filter out oceans whose lastRewardBlock has passed, and add some data from contract
+  let curBlock = await w3.eth.getBlockNumber();
+  let result: Ocean[] = [];
+  for (const o of filtered) {
+    let contract = await getOceanContract(o.address);
+    let bonusEndBlock = parseInt(await contract.methods.bonusEndBlock().call());
+
+    let ended = curBlock > bonusEndBlock;
+    console.log(
+      `ocean ${o.address}, curblock=${curBlock}, endblock=${bonusEndBlock}, ended=${ended}`
+    );
+    if (!ended) {
+      let rewardPerBlock = parseFloat(
+        Web3.utils.fromWei(await contract.methods.rewardPerBlock().call())
+      );
+
+      let extended: Ocean = {
+        ...o,
+        bonusEndBlock,
+        rewardPerBlock,
+      };
+      result.push(extended);
+    }
+  }
+
+  return result;
 }
 
 export async function getOceanABI() {
@@ -107,6 +148,16 @@ export async function getBnbPrice(): Promise<number> {
   return res.data.binancecoin.usd;
 }
 
+/**
+ * the end block for an ocean
+ * @param oceanAddress
+ * @returns
+ */
+export async function ocean_bonusEndBlock(oceanAddress: string) {
+  const oceanContract = await getOceanContract(oceanAddress);
+  return parseInt(await oceanContract.methods.bonusEndBlock().call());
+}
+
 export async function getOceanInfo(ocean: Ocean) {
   // const oceans = await getOceans();
 
@@ -121,10 +172,6 @@ export async function getOceanInfo(ocean: Ocean) {
     .balanceOf(ocean.address)
     .call();
   let totalStaked = parseFloat(Web3.utils.fromWei(totalStakedRes, "ether"));
-  let rewardPerBlockRes = await oceanContract.methods.rewardPerBlock().call();
-  let rewardPerBlock = parseFloat(
-    Web3.utils.fromWei(rewardPerBlockRes, "ether")
-  );
   let depositTokenPrice = await getTokenPrice(
     ocean.depositTokenAddress.toLowerCase()
   );
@@ -133,7 +180,7 @@ export async function getOceanInfo(ocean: Ocean) {
   );
   let TVL = totalStaked * depositTokenPrice;
   let blocksPerYear = 28800 * 365;
-  let dollarsPerBlock = rewardPerBlock * rewardTokenPrice;
+  let dollarsPerBlock = ocean.rewardPerBlock * rewardTokenPrice;
   let APR = TVL > 0 ? ((dollarsPerBlock * blocksPerYear) / TVL) * 100 : 0;
 
   const info: OceanInfo = {

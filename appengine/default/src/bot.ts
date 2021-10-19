@@ -72,14 +72,16 @@ const listOceans = async (ctx: Context) => {
   let numOceans = oceans.length;
 
   const buttons: any[] = [];
-  let msg: string = `there are ${numOceans} oceans, which do you want info on?\n`;
+  let msg: string = `there are ${numOceans} active oceans, which do you want info on?\n`;
   for (let i = 0; i < oceans.length; i++) {
     let o = oceans[i];
 
     let info = await getOceanInfo(o);
 
     buttons.push(`/o${i}`);
-    msg += `/o${i} stake ${o.depositToken} for ${o.earningToken}: ${info.apr}% APR\n`;
+    msg += `/o${i} stake ${o.depositToken} for ${
+      o.earningToken
+    }: ${formatNumber(info.apr)}% APR\n`;
   }
 
   return ctx.reply(
@@ -128,7 +130,7 @@ Total staked: ${formatNumber(info.totalStaked)} ${ocean.depositToken}
 ${ocean.depositToken} price: $${info.depositTokenPrice.toFixed(4)}
 ${ocean.earningToken} price: $${info.rewardTokenPrice.toFixed(4)}
 TVL: $${formatNumber(info.tvl)}
-APR: ${formatNumber(info.tvl)}%`;
+APR: ${formatNumber(info.apr)}%`;
 
   return ctx.reply(msg);
 };
