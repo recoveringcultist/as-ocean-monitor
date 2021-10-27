@@ -24,6 +24,15 @@ async function start() {
   // Set the bot API endpoint
   const secretPath = `/telegraf/${bot.secretPathComponent()}`;
   app.use(bot.webhookCallback(secretPath));
+  app.get("/_ah/start", (req, res) => {
+    res.send("starting");
+  });
+  app.get("/_ah/stop", (req, res) => {
+    try {
+      bot.stop("/_ah/stop");
+    } catch (e) {}
+    res.send("stopped");
+  });
   app.listen(PORT, () => {
     console.log(`as-ocean-monitor listening on port ${PORT}`);
   });

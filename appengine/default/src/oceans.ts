@@ -39,7 +39,8 @@ interface OceanBase {
  * ocean with contract additions
  */
 interface Ocean extends OceanBase {
-  bonusEndBlock: number;
+  endsIn: number;
+  startsIn: number;
   rewardPerBlock: number;
 }
 
@@ -50,6 +51,7 @@ export interface OceanInfo extends Ocean {
   tvl: number;
   apr: number;
   totalStaked: number;
+  tokensAddedToReduceAprBy5?: number;
   depositTokenPrice: number;
   rewardTokenPrice: number;
 }
@@ -89,13 +91,16 @@ async function getOceans(): Promise<Ocean[]> {
   let result: Ocean[] = [];
   for (const o of filtered) {
     let contract = await getOceanContract(o.address);
-    let bonusEndBlock = parseInt(await contract.methods.bonusEndBlock().call());
+    let startsIn =
+      parseInt(await contract.methods.startBlock().call()) - curBlock;
+    let endsIn =
+      parseInt(await contract.methods.bonusEndBlock().call()) - curBlock;
 
-    let ended = curBlock > bonusEndBlock;
-    // console.log(
-    //   `ocean ${o.address}, curblock=${curBlock}, endblock=${bonusEndBlock}, ended=${ended}`
-    // );
-    if (!ended) {
+    let active = startsIn < 0 && endsIn > 0;
+    console.log(
+      `ocean ${o.address}, curblock=${curBlock}, startsIn=${startsIn}, endsIn=${endsIn}, active=${active}`
+    );
+    if (active) {
       let tokenInfo = await getTokenInfo(o.earningTokenAddress);
       let rewardPerBlock = parseFloat(
         fromWeiDecimals(
@@ -106,7 +111,8 @@ async function getOceans(): Promise<Ocean[]> {
 
       let extended: Ocean = {
         ...o,
-        bonusEndBlock,
+        startsIn,
+        endsIn,
         rewardPerBlock,
       };
       result.push(extended);
@@ -124,7 +130,17 @@ function secondsAgo(millis: number) {
   return ((Date.now() - millis) / 1000).toFixed(1);
 }
 
-export async function getOceanInfos(sortByAPR: boolean = false) {
+export async function getOceanInfos(filterToken?: string) {
+  let oceans = await getOceanInfosInternal();
+  if (filterToken) {
+    return oceans.filter((val) =>
+      addressesAreEqual(filterToken, val.depositTokenAddress)
+    );
+  }
+  return oceans;
+}
+
+async function getOceanInfosInternal() {
   if (_currentlyFetching && _oceanInfos) {
     console.log("getOceanInfos: still fetching, returning previous data");
     return _oceanInfos;
@@ -157,9 +173,7 @@ export async function getOceanInfos(sortByAPR: boolean = false) {
       let o = oceans[i];
       infos.push(await getOceanInfo(o));
     }
-    if (sortByAPR) {
-      infos.sort((a, b) => (a.apr < b.apr ? 1 : -1));
-    }
+    infos.sort((a, b) => (a.apr < b.apr ? 1 : -1));
 
     _oceanInfos = infos;
     _oceanInfos_lastFetch = Date.now();
@@ -404,8 +418,17 @@ async function getOceanInfo(ocean: Ocean) {
     totalStaked,
     depositTokenPrice,
     rewardTokenPrice,
+    tokensAddedToReduceAprBy5: totalStaked / 19,
   };
   return info;
+}
+
+export function calculateDepositAprDelta(
+  apr: number,
+  total: number,
+  deposit: number
+) {
+  return -apr / (1 + total / deposit);
 }
 
 /**
@@ -420,4 +443,8 @@ export function addressesAreEqual(address1: string, address2: string) {
 
 export function addressesIsIn(address: string, addresses: string[]) {
   return addresses.find((val) => addressesAreEqual(val, address)) != null;
+}
+
+export function blocksToDays(n: number) {
+  return n / 28800;
 }
