@@ -179,20 +179,23 @@ async function getOceanInfosInternal(notify?: () => void) {
   }
 
   // return cached data if still fresh
+  let delta = secondsAgo(_oceanInfos_lastFetch);
   if (cacheIsFresh(_oceanInfos_lastFetch)) {
     _oceanInfos = await getDataDB();
-    let delta = secondsAgo(_oceanInfos_lastFetch);
     console.log(
       `getOceanInfos: cache still fresh (${delta}s), returning previous data`
     );
-    // console.log(`getOceanInfos: attempting to refresh data sneakily`);
-    // fetchData();
-    // console.log(`getOceanInfos: returning cached data`);
     return _oceanInfos;
   }
 
-  if (notify) notify();
-  return fetchData();
+  // cache is too old, send old data and fetch new data sneakily in background
+  console.log(
+    `getOceanInfos: cache expired (${delta}s), returning stale data and fetching in bg`
+  );
+  _oceanInfos = await getDataDB();
+  // if (notify) notify();
+  fetchData(); // sneaky bg fetch
+  return _oceanInfos;
 }
 
 async function fetchData() {
