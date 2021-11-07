@@ -73,7 +73,6 @@ export async function createBot() {
   bot.start(makeHandler(processStart));
   bot.help((ctx) => ctx.reply("try sending command /start"));
   // bot.on("text", (ctx) => ctx.replyWithHTML("<b>Hello</b>"));
-  bot.command("oceans", makeHandler(processListOceans));
   bot.hears(/\/o(\d+)/, makeHandler(oceanInfo));
   bot.hears("hi", (ctx) => ctx.reply("Hey there"));
   bot.on("callback_query", makeHandler(processCallbackQuery));
@@ -93,42 +92,47 @@ const processStart = async (ctx: Context) => {
 
   let msg = `Hello <b>${ctx.message.from.first_name}</b>! Welcome to the AS ocean monitor bot.
 Available commands:
-/start display this message
-/oceans list available oceans`;
+/start display this message`;
   return ctx.replyWithHTML(
     msg,
     Markup.inlineKeyboard([
       Markup.button.callback("JAWS oceans", "oceans_jaws"),
       Markup.button.callback("FINS oceans", "oceans_fins"),
+      Markup.button.callback("All oceans", "oceans_all"),
     ])
   );
 };
 
 const processCallbackQuery = async (ctx: Context) => {
+  const notify = () => ctx.reply("fetching data, please wait...");
+
   if ("data" in ctx.callbackQuery) {
     const data = ctx.callbackQuery.data;
     console.log(`processCallbackQuery: ${data}`);
     // process the callback
-    let infos: OceanInfo[];
-    switch (data) {
-      case "oceans_jaws":
-        await ctx.answerCbQuery();
-        infos = await getOceanInfos(JAWS_ADDRESS);
-        return sendOceanList(infos, ctx);
-      case "oceans_fins":
-        await ctx.answerCbQuery();
-        infos = await getOceanInfos(FINS_ADDRESS);
-        return sendOceanList(infos, ctx);
+    if (data === "oceans_jaws") {
+      await ctx.answerCbQuery();
+      let { infos, lastFetched } = await getOceanInfos(JAWS_ADDRESS, notify);
+      return sendOceanList(ctx, infos, lastFetched);
+    } else if (data == "oceans_fins") {
+      await ctx.answerCbQuery();
+      let { infos, lastFetched } = await getOceanInfos(FINS_ADDRESS, notify);
+      return sendOceanList(ctx, infos, lastFetched);
+    } else if (data == "oceans_all") {
+      await ctx.answerCbQuery();
+      let { infos, lastFetched } = await getOceanInfos(null, notify);
+      return sendOceanList(ctx, infos, lastFetched);
     }
+
     if (data.startsWith("ocean_")) {
       await ctx.answerCbQuery();
       let oceanAddress = data.split("_")[1];
-      let infos = await getOceanInfos();
+      let { infos, lastFetched } = await getOceanInfos(null, notify);
       let info = infos.find((val) =>
         addressesAreEqual(val.address, oceanAddress)
       );
       if (info) {
-        return sendOceanInfo(info, ctx);
+        return sendOceanInfo(ctx, info, lastFetched);
       }
       return ctx.reply(`i don't know that ocean`);
     }
@@ -137,12 +141,11 @@ const processCallbackQuery = async (ctx: Context) => {
   return ctx.answerCbQuery(`sorry, i didn't catch that`);
 };
 
-const processListOceans = async (ctx: Context) => {
-  let infos: OceanInfo[] = await getOceanInfos();
-  return sendOceanList(infos, ctx);
-};
-
-const sendOceanList = async (infos: OceanInfo[], ctx: Context) => {
+const sendOceanList = async (
+  ctx: Context,
+  infos: OceanInfo[],
+  lastFetched: number
+) => {
   const buttons: any[] = [];
   let msg: string = `<b>Please choose an ocean for more info:</b>\n`;
   for (let i = 0; i < infos.length; i++) {
@@ -158,6 +161,7 @@ const sendOceanList = async (infos: OceanInfo[], ctx: Context) => {
       info.apr
     )}% APR (end ~${formatNumber(blocksToDays(info.endsIn))}d)\n`;
   }
+  msg += `data fetched ${relativeTime(lastFetched)}\n`;
 
   return ctx.replyWithHTML(msg, Markup.inlineKeyboard(buttons, { columns: 2 }));
 };
@@ -166,14 +170,15 @@ const oceanInfo = async (ctx) => {
   return ctx.reply("coming soon");
 };
 
-const sendOceanInfo = async (info: OceanInfo, ctx) => {
+const sendOceanInfo = async (ctx, info: OceanInfo, lastFetched: number) => {
   let msg = `<b>stake ${info.depositToken} for ${info.earningToken}:</b>
 Total staked: ${formatNumber(info.totalStaked)} ${info.depositToken}
 ${info.depositToken} price: $${info.depositTokenPrice.toFixed(4)}
 ${info.earningToken} price: $${info.rewardTokenPrice.toFixed(4)}
 TVL: $${formatNumber(info.tvl)}
 APR: ${formatNumber(info.apr)}%
-ends in ~${formatNumber(blocksToDays(info.endsIn))} day(s)`;
+ends in ~${formatNumber(blocksToDays(info.endsIn))} day(s)
+total reward tokens: ${formatNumber(info.totalRewardTokens)}`;
   let deposits = [100, 500, 1000, 5000, 10000, 50000];
   for (let deposit of deposits) {
     let delta = calculateDepositAprDelta(info.apr, info.totalStaked, deposit);
@@ -181,8 +186,25 @@ ends in ~${formatNumber(blocksToDays(info.endsIn))} day(s)`;
       info.depositToken
     }: ${formatNumber(info.apr + delta)}%`;
   }
+  msg += `\ndata fetched ${relativeTime(lastFetched)}`;
 
   return ctx.replyWithHTML(msg);
+};
+
+const relativeTime = (millis: number) => {
+  const delta = (Date.now() - millis) / 1000;
+  if (delta < 0) {
+    return "in " + delta.toFixed(1) + "second(s)";
+  }
+  if (delta <= 60) {
+    return delta.toFixed(1) + " second(s) ago";
+  } else if (delta <= 60 * 60) {
+    return (delta / 60).toFixed(1) + " minute(s) ago";
+  } else if (delta <= 60 * 60 * 24) {
+    return (delta / (60 * 60)).toFixed(1) + " hour(s) ago";
+  } else {
+    return (delta / (60 * 60 * 24)).toFixed(1) + " day(s) ago";
+  }
 };
 
 const makeHandler = (f: (ctx) => any): ((ctx) => any) => {

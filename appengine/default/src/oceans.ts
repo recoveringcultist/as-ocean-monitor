@@ -4,6 +4,7 @@ import Web3 from "web3";
 import { promises as fs } from "fs";
 import * as path from "path";
 import BN from "bn.js";
+import * as admin from "firebase-admin";
 
 export const JAWS_ADDRESS: string =
   "0xdD97AB35e3C0820215bc85a395e13671d84CCBa2";
@@ -15,6 +16,8 @@ export const SUBGRAPH_API_URL: string =
   "https://api.thegraph.com/subgraphs/name/autoshark-finance/exchange-v1";
 export const FARMARMY_API: string = "https://farm.army/api/v0/prices";
 export const CACHE_TTL: number = 1000 * 60 * 5; //5 min
+export const DB_OCEAN_INFOS: string = "/oceaninfos";
+export const DB_OCEAN_INFOS_LASTFETCH: string = "/oceaninfos_lastfetch";
 
 const { DEXGURU_APIKEY } = process.env;
 
@@ -42,6 +45,7 @@ interface Ocean extends OceanBase {
   endsIn: number;
   startsIn: number;
   rewardPerBlock: number;
+  totalRewardTokens?: number;
 }
 
 /**
@@ -81,9 +85,8 @@ async function getOceans(): Promise<Ocean[]> {
   // const oceans: OceanBase[] = (res.data as any).data;
   const oceans: OceanBase[] = data.data;
   let filtered = oceans.filter(
-    (o) =>
-      o.active &&
-      addressesIsIn(o.depositTokenAddress, [JAWS_ADDRESS, FINS_ADDRESS])
+    (o) => o.active /*&&
+      addressesIsIn(o.depositTokenAddress, [JAWS_ADDRESS, FINS_ADDRESS])*/
   );
 
   // filter out oceans whose lastRewardBlock has passed, and add some data from contract
@@ -108,12 +111,14 @@ async function getOceans(): Promise<Ocean[]> {
           tokenInfo.decimals
         )
       );
+      let totalRewardTokens = endsIn * rewardPerBlock;
 
       let extended: Ocean = {
         ...o,
         startsIn,
         endsIn,
         rewardPerBlock,
+        totalRewardTokens,
       };
       result.push(extended);
     }
@@ -130,31 +135,67 @@ function secondsAgo(millis: number) {
   return ((Date.now() - millis) / 1000).toFixed(1);
 }
 
-export async function getOceanInfos(filterToken?: string) {
-  let oceans = await getOceanInfosInternal();
+export async function getOceanInfos(filterToken?: string, notify?: () => void) {
+  let infos = await getOceanInfosInternal(notify);
   if (filterToken) {
-    return oceans.filter((val) =>
+    infos = infos.filter((val) =>
       addressesAreEqual(filterToken, val.depositTokenAddress)
     );
   }
-  return oceans;
+  return { infos, lastFetched: _oceanInfos_lastFetch };
 }
 
-async function getOceanInfosInternal() {
-  if (_currentlyFetching && _oceanInfos) {
-    console.log("getOceanInfos: still fetching, returning previous data");
-    return _oceanInfos;
+async function getLastFetchedDB() {
+  const db = admin.database();
+  let snap = await db.ref(DB_OCEAN_INFOS_LASTFETCH).once("value");
+  const val: any = snap.val();
+  if (val == null) return 0;
+  return val as number;
+}
+
+async function getDataDB() {
+  const db = admin.database();
+  let snap = await db.ref(DB_OCEAN_INFOS).once("value");
+  const ret: OceanInfo[] = snap.val();
+  return ret;
+}
+
+async function getOceanInfosInternal(notify?: () => void) {
+  // check last fetched
+  _oceanInfos_lastFetch = await getLastFetchedDB();
+
+  if (_currentlyFetching) {
+    // stuck fetching for an hour or more? fetch fresh
+    if (Date.now() - _oceanInfos_lastFetch > 1000 * 60 * 60) {
+      console.log(
+        "getOceanInfos: stuck fetching for over an hour, fetching fresh"
+      );
+      _currentlyFetching = false;
+    } else {
+      console.log("getOceanInfos: still fetching, returning previous data");
+      _oceanInfos = await getDataDB();
+      return _oceanInfos;
+    }
   }
 
   // return cached data if still fresh
-  if (_oceanInfos && cacheIsFresh(_oceanInfos_lastFetch)) {
+  if (cacheIsFresh(_oceanInfos_lastFetch)) {
+    _oceanInfos = await getDataDB();
     let delta = secondsAgo(_oceanInfos_lastFetch);
     console.log(
       `getOceanInfos: cache still fresh (${delta}s), returning previous data`
     );
+    // console.log(`getOceanInfos: attempting to refresh data sneakily`);
+    // fetchData();
+    // console.log(`getOceanInfos: returning cached data`);
     return _oceanInfos;
   }
 
+  if (notify) notify();
+  return fetchData();
+}
+
+async function fetchData() {
   try {
     // fetch data
     if (_oceanInfos_lastFetch == 0) {
@@ -178,6 +219,11 @@ async function getOceanInfosInternal() {
     _oceanInfos = infos;
     _oceanInfos_lastFetch = Date.now();
     _currentlyFetching = false;
+
+    // save to db
+    const db = admin.database();
+    await db.ref(DB_OCEAN_INFOS).set(_oceanInfos);
+    await db.ref(DB_OCEAN_INFOS_LASTFETCH).set(_oceanInfos_lastFetch);
 
     let fetchDuration = Math.round(_oceanInfos_lastFetch - fetchStart);
     console.log(`getOceanInfos: fetch finished in ${fetchDuration} ms`);
@@ -275,14 +321,24 @@ export async function getTokenPrice(address: string): Promise<number> {
     // );
 
     // dex guru
-    let tokenPriceData: any = await networkCache(
-      `https://api.dev.dex.guru/v1/chain/56/tokens/${address}/market?api-key=${DEXGURU_APIKEY!}`
-    );
-    // `https://api.dex.guru/v1/tokens/${address}-bsc?api-key=${DEXGURU_APIKEY!}` // priceUSD
-    if (tokenPriceData.price_usd != null) {
-      let price = parseFloat(tokenPriceData.price_usd);
-      // console.log(`found price of ${tokenInfo.symbol} in dexguru: ${price}`);
-      return price;
+    let url = `https://api.dev.dex.guru/v1/chain/56/tokens/${address}/market?api-key=${DEXGURU_APIKEY!}`;
+    try {
+      let tokenPriceData: any = await networkCache(url);
+      // `https://api.dex.guru/v1/tokens/${address}-bsc?api-key=${DEXGURU_APIKEY!}` // priceUSD
+      if (tokenPriceData.price_usd != null) {
+        let price = parseFloat(tokenPriceData.price_usd);
+        // console.log(`found price of ${tokenInfo.symbol} in dexguru: ${price}`);
+        return price;
+      }
+    } catch (e) {
+      console.error(
+        "error fetching dexguru from " +
+          url +
+          "\n" +
+          e.toString() +
+          "\n" +
+          e.stack
+      );
     }
 
     // farm army

@@ -20,13 +20,14 @@
     "deploy": "gcloud app deploy --project as-ocean-monitor && gcloud app browse --project as-ocean-monitor -s default",
     "logs": "gcloud app logs tail --project as-ocean-monitor -s default",
     "gcloud-setproject": "gcloud config set project as-ocean-monitor",
-    "gcloud-activate-config": "gcloud config configurations activate as-ocean-monitor"
+    "gcloud-switch": "gcloud config configurations activate as-ocean-monitor"
   },
   "dependencies": {
     "@types/node": "^14.14.7",
     "axios": "^0.23.0",
     "body-parser": "^1.19.0",
     "express": "^4.17.1",
+    "firebase-admin": "^10.0.0",
     "fs": "^0.0.1-security",
     "path": "^0.12.7",
     "telegraf": "^4.4.2",

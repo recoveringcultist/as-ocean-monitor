@@ -6,4 +6,6 @@ node_modules/
 
 dist/
 
+cert/
+
 env_variables.yaml
