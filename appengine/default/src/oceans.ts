@@ -5,6 +5,7 @@ import { promises as fs } from "fs";
 import * as path from "path";
 import BN from "bn.js";
 import * as admin from "firebase-admin";
+import { Context } from "telegraf";
 
 export const JAWS_ADDRESS: string =
   "0xdD97AB35e3C0820215bc85a395e13671d84CCBa2";
@@ -18,6 +19,7 @@ export const FARMARMY_API: string = "https://farm.army/api/v0/prices";
 export const CACHE_TTL: number = 1000 * 60 * 5; //5 min
 export const DB_OCEAN_INFOS: string = "/oceaninfos";
 export const DB_OCEAN_INFOS_LASTFETCH: string = "/oceaninfos_lastfetch";
+export const DB_USERINFO: string = "/userinfo";
 
 const { DEXGURU_APIKEY } = process.env;
 
@@ -65,6 +67,12 @@ export interface TokenInfo {
   symbol: string;
   address: string;
   decimals: number;
+}
+
+export interface UserInfo {
+  id: string;
+  botState?: "awaiting_wallet";
+  address?: string;
 }
 
 interface NetworkCacheItem {
@@ -135,34 +143,34 @@ function secondsAgo(millis: number) {
   return ((Date.now() - millis) / 1000).toFixed(1);
 }
 
-export async function getOceanInfos(filterToken?: string, notify?: () => void) {
-  let infos = await getOceanInfosInternal(notify);
+/**
+ * get information on a list of oceans
+ * @param filterToken optional token to filter the list by
+ * @param ctx optional telegraph context for notifying the user of status
+ * @returns infos, lastFetched, currentlyFetching
+ */
+export async function getOceanInfos(filterToken?: string, ctx?: Context) {
+  let infos = await getOceanInfosInternal(ctx);
   if (filterToken) {
     infos = infos.filter((val) =>
       addressesAreEqual(filterToken, val.depositTokenAddress)
     );
   }
-  return { infos, lastFetched: _oceanInfos_lastFetch };
+  return {
+    infos,
+    lastFetched: _oceanInfos_lastFetch,
+    currentlyFetching: _currentlyFetching,
+  };
 }
 
-async function getLastFetchedDB() {
-  const db = admin.database();
-  let snap = await db.ref(DB_OCEAN_INFOS_LASTFETCH).once("value");
-  const val: any = snap.val();
-  if (val == null) return 0;
-  return val as number;
-}
-
-async function getDataDB() {
-  const db = admin.database();
-  let snap = await db.ref(DB_OCEAN_INFOS).once("value");
-  const ret: OceanInfo[] = snap.val();
-  return ret;
-}
-
-async function getOceanInfosInternal(notify?: () => void) {
+/**
+ * internal implementation
+ * @param ctx optional telegraf context to report status to user
+ * @returns
+ */
+async function getOceanInfosInternal(ctx?: Context) {
   // check last fetched
-  _oceanInfos_lastFetch = await getLastFetchedDB();
+  _oceanInfos_lastFetch = await db_getLastFetched();
 
   if (_currentlyFetching) {
     // stuck fetching for an hour or more? fetch fresh
@@ -173,7 +181,8 @@ async function getOceanInfosInternal(notify?: () => void) {
       _currentlyFetching = false;
     } else {
       console.log("getOceanInfos: still fetching, returning previous data");
-      _oceanInfos = await getDataDB();
+      if (ctx) ctx.reply("Fetch in progress, returning cached data");
+      _oceanInfos = await db_getOceansData();
       return _oceanInfos;
     }
   }
@@ -181,7 +190,7 @@ async function getOceanInfosInternal(notify?: () => void) {
   // return cached data if still fresh
   let delta = secondsAgo(_oceanInfos_lastFetch);
   if (cacheIsFresh(_oceanInfos_lastFetch)) {
-    _oceanInfos = await getDataDB();
+    _oceanInfos = await db_getOceansData();
     console.log(
       `getOceanInfos: cache still fresh (${delta}s), returning previous data`
     );
@@ -192,9 +201,16 @@ async function getOceanInfosInternal(notify?: () => void) {
   console.log(
     `getOceanInfos: cache expired (${delta}s), returning stale data and fetching in bg`
   );
-  _oceanInfos = await getDataDB();
-  // if (notify) notify();
-  fetchData(); // sneaky bg fetch
+  _oceanInfos = await db_getOceansData();
+  // sneaky bg fetch
+  fetchData().then(({ infos, fetchDuration }) => {
+    if (ctx)
+      ctx.reply(
+        `Fresh data fetched in ${(fetchDuration / 1000).toFixed(
+          1
+        )}s! See it by sending /start`
+      );
+  });
   return _oceanInfos;
 }
 
@@ -231,7 +247,7 @@ async function fetchData() {
     let fetchDuration = Math.round(_oceanInfos_lastFetch - fetchStart);
     console.log(`getOceanInfos: fetch finished in ${fetchDuration} ms`);
 
-    return infos;
+    return { infos, fetchDuration };
   } catch (e) {
     _currentlyFetching = false;
     throw e;
@@ -277,6 +293,10 @@ async function cacheABI(key) {
   return abi;
 }
 
+export function isAddress(address: string) {
+  return w3.utils.isAddress(address);
+}
+
 export async function getContract(abi: any, address: string) {
   return new w3.eth.Contract(abi, address);
 }
@@ -292,7 +312,7 @@ export async function getTokenContract(address: string) {
 }
 
 export async function getTokenPrice(address: string): Promise<number> {
-  let tokenInfo = await getTokenInfo(address);
+  let tokenInfo: TokenInfo = await getTokenInfo(address);
 
   // look for price in subgraph first
   var query: String = `
@@ -323,25 +343,27 @@ export async function getTokenPrice(address: string): Promise<number> {
     //   `subgraph has price 0 or no data for ${tokenInfo.symbol}, decimals ${tokenInfo.decimals}`
     // );
 
-    // dex guru
-    let url = `https://api.dev.dex.guru/v1/chain/56/tokens/${address}/market?api-key=${DEXGURU_APIKEY!}`;
-    try {
-      let tokenPriceData: any = await networkCache(url);
-      // `https://api.dex.guru/v1/tokens/${address}-bsc?api-key=${DEXGURU_APIKEY!}` // priceUSD
-      if (tokenPriceData.price_usd != null) {
-        let price = parseFloat(tokenPriceData.price_usd);
-        // console.log(`found price of ${tokenInfo.symbol} in dexguru: ${price}`);
-        return price;
+    if (tokenInfo.symbol !== "cJAWS") {
+      // dex guru
+      let url = `https://api.dev.dex.guru/v1/chain/56/tokens/${address}/market?api-key=${DEXGURU_APIKEY!}`;
+      try {
+        let tokenPriceData: any = await networkCache(url);
+        // `https://api.dex.guru/v1/tokens/${address}-bsc?api-key=${DEXGURU_APIKEY!}` // priceUSD
+        if (tokenPriceData.price_usd != null) {
+          let price = parseFloat(tokenPriceData.price_usd);
+          // console.log(`found price of ${tokenInfo.symbol} in dexguru: ${price}`);
+          return price;
+        }
+      } catch (e) {
+        console.error(
+          "error fetching dexguru from " +
+            url +
+            "\n" +
+            e.toString() +
+            "\n" +
+            e.stack
+        );
       }
-    } catch (e) {
-      console.error(
-        "error fetching dexguru from " +
-          url +
-          "\n" +
-          e.toString() +
-          "\n" +
-          e.stack
-      );
     }
 
     // farm army
@@ -506,4 +528,58 @@ export function addressesIsIn(address: string, addresses: string[]) {
 
 export function blocksToDays(n: number) {
   return n / 28800;
+}
+
+/**
+ * get last fetched timestamp from db
+ * @returns
+ */
+async function db_getLastFetched() {
+  const db = admin.database();
+  let snap = await db.ref(DB_OCEAN_INFOS_LASTFETCH).once("value");
+  const val: any = snap.val();
+  if (val == null) return 0;
+  return val as number;
+}
+
+/**
+ * get oceans data from db
+ * @returns
+ */
+async function db_getOceansData() {
+  const db = admin.database();
+  let snap = await db.ref(DB_OCEAN_INFOS).once("value");
+  const ret: OceanInfo[] = snap.val();
+  return ret;
+}
+
+/**
+ * get user info from db
+ * @returns
+ */
+export async function db_getUserInfo(id) {
+  const db = admin.database();
+  const dbPath = `${DB_USERINFO}/${id}`;
+  let snap = await db.ref(dbPath).once("value");
+  if (!snap.exists()) {
+    // create
+    const info: UserInfo = {
+      id,
+    };
+    await db.ref(dbPath).set(info);
+    return info;
+  }
+
+  const res: UserInfo = snap.val();
+  return res;
+}
+
+/**
+ * set user info in db
+ * @returns
+ */
+export async function db_setUserInfo(info: UserInfo) {
+  const db = admin.database();
+  const dbPath = `${DB_USERINFO}/${info.id}`;
+  await db.ref(dbPath).set(info);
 }

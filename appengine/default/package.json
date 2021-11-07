@@ -17,10 +17,10 @@
     "start": "node ./dist/index.js",
     "gcp-build": "tsc -p .",
     "browse": "gcloud app browse --project as-ocean-monitor -s default",
-    "deploy": "gcloud app deploy --project as-ocean-monitor && gcloud app browse --project as-ocean-monitor -s default",
+    "deploy": "gcloud app deploy --project as-ocean-monitor && npm run browse && npm run logs",
     "logs": "gcloud app logs tail --project as-ocean-monitor -s default",
     "gcloud-setproject": "gcloud config set project as-ocean-monitor",
-    "gcloud-switch": "gcloud config configurations activate as-ocean-monitor"
+    "gcloud-activate": "gcloud config configurations activate as-ocean-monitor"
   },
   "dependencies": {
     "@types/node": "^14.14.7",

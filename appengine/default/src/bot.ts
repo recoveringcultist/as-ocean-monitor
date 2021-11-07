@@ -5,11 +5,26 @@ import {
   addressesAreEqual,
   blocksToDays,
   calculateDepositAprDelta,
+  db_getUserInfo,
+  db_setUserInfo,
   FINS_ADDRESS,
   getOceanInfos,
+  isAddress,
   JAWS_ADDRESS,
   OceanInfo,
 } from "./oceans";
+import { getString, strings } from "./strings";
+
+const CALLBACKS = {
+  oceans_jaws: "oceans_jaws",
+  oceans_fins: "oceans_fins",
+  oceans_all: "oceans_all",
+  ocean_prefix: "ocean_",
+  wallet_link: "wallet_link",
+  wallet_unlink: "wallet_unlink",
+  wallet_check: "wallet_check",
+  button_cancel: "button_cancel",
+};
 
 const LOCALE_OPTIONS = { minimumFractionDigits: 2, maximumFractionDigits: 2 };
 const LOCALE_OPTIONS_INT = {
@@ -71,10 +86,9 @@ export async function createBot() {
 
   // Set up the bot's listeners
   bot.start(makeHandler(processStart));
-  bot.help((ctx) => ctx.reply("try sending command /start"));
-  // bot.on("text", (ctx) => ctx.replyWithHTML("<b>Hello</b>"));
-  bot.hears(/\/o(\d+)/, makeHandler(oceanInfo));
-  bot.hears("hi", (ctx) => ctx.reply("Hey there"));
+  bot.help((ctx) => sendReply(ctx, "HELP"));
+  bot.on("text", makeHandler(processText));
+  // bot.hears("hi", (ctx) => ctx.reply("Hey there"));
   bot.on("callback_query", makeHandler(processCallbackQuery));
   bot.launch();
 
@@ -85,54 +99,158 @@ export async function createBot() {
   return bot;
 }
 
+/**
+ * process the start command
+ * @param ctx telegraf context
+ * @returns
+ */
 const processStart = async (ctx: Context) => {
   console.log(
     `processStart: ${ctx.from.id}, ${ctx.from.first_name}, ${ctx.from.last_name}, ${ctx.from.username}`
   );
+  // create or load user
+  const user = await db_getUserInfo(ctx.from.id);
+  // clear bot state if it was waiting for a reply
+  if (user.botState == "awaiting_wallet") {
+    user.botState = null;
+    await db_setUserInfo(user);
+  }
 
   let msg = `Hello <b>${ctx.message.from.first_name}</b>! Welcome to the AS ocean monitor bot.
 Available commands:
 /start display this message`;
   return ctx.replyWithHTML(
     msg,
-    Markup.inlineKeyboard([
-      Markup.button.callback("JAWS oceans", "oceans_jaws"),
-      Markup.button.callback("FINS oceans", "oceans_fins"),
-      Markup.button.callback("All oceans", "oceans_all"),
-    ])
+    Markup.inlineKeyboard(
+      [
+        Markup.button.callback("JAWS oceans", CALLBACKS.oceans_jaws),
+        Markup.button.callback("FINS oceans", CALLBACKS.oceans_fins),
+        Markup.button.callback("All oceans", CALLBACKS.oceans_all),
+        Markup.button.callback("Link Wallet", CALLBACKS.wallet_link),
+        Markup.button.callback("Unlink Wallet", CALLBACKS.wallet_unlink),
+        Markup.button.callback("Check Wallet", CALLBACKS.wallet_check),
+      ],
+      { columns: 2 }
+    )
   );
 };
 
-const processCallbackQuery = async (ctx: Context) => {
-  const notify = () => ctx.reply("fetching data, please wait...");
+/**
+ * process a text message from a user
+ * @param ctx
+ * @returns
+ */
+const processText = async (ctx: Context) => {
+  if ("text" in ctx.message) {
+    const { text } = ctx.message;
+    const user = await db_getUserInfo(ctx.from.id);
 
-  if ("data" in ctx.callbackQuery) {
-    const data = ctx.callbackQuery.data;
-    console.log(`processCallbackQuery: ${data}`);
-    // process the callback
-    if (data === "oceans_jaws") {
-      await ctx.answerCbQuery();
-      let { infos, lastFetched } = await getOceanInfos(JAWS_ADDRESS, notify);
-      return sendOceanList(ctx, infos, lastFetched);
-    } else if (data == "oceans_fins") {
-      await ctx.answerCbQuery();
-      let { infos, lastFetched } = await getOceanInfos(FINS_ADDRESS, notify);
-      return sendOceanList(ctx, infos, lastFetched);
-    } else if (data == "oceans_all") {
-      await ctx.answerCbQuery();
-      let { infos, lastFetched } = await getOceanInfos(null, notify);
-      return sendOceanList(ctx, infos, lastFetched);
+    // decide according to bot state
+    if (user.botState === "awaiting_wallet") {
+      // set user wallet
+      if (isAddress(text)) {
+        user.address = text;
+        user.botState = null;
+        await db_setUserInfo(user);
+        return sendReply(ctx, "WALLET_UPDATED");
+      } else {
+        // invalid wallet
+        await sendReply(ctx, "WALLET_INVALID");
+        return sendReply(ctx, "ENTER_WALLET");
+      }
     }
 
-    if (data.startsWith("ocean_")) {
+    // default response
+    console.log(`processText: ${text}`);
+    await ctx.reply("you sent: " + text);
+    return sendReply(ctx, "HELP");
+  }
+};
+
+const sendReply = async (ctx: Context, key: string) => {
+  if (key === "ENTER_WALLET") {
+    return ctx.reply(
+      getString(key),
+      Markup.inlineKeyboard([
+        Markup.button.callback("Cancel", CALLBACKS.button_cancel),
+      ])
+    );
+  }
+  return ctx.reply(getString(key));
+};
+
+/**
+ * process a callback query from a user
+ * @param ctx
+ * @returns
+ */
+const processCallbackQuery = async (ctx: Context) => {
+  if ("data" in ctx.callbackQuery) {
+    const { data } = ctx.callbackQuery;
+    console.log(`processCallbackQuery: ${data}`);
+    const user = await db_getUserInfo(ctx.from.id);
+
+    // process the callback
+    // ocean lists
+    if (data === CALLBACKS.oceans_jaws) {
       await ctx.answerCbQuery();
-      let oceanAddress = data.split("_")[1];
-      let { infos, lastFetched } = await getOceanInfos(null, notify);
+      let { infos, lastFetched, currentlyFetching } = await getOceanInfos(
+        JAWS_ADDRESS,
+        ctx
+      );
+      return sendOceanList(ctx, infos, lastFetched, currentlyFetching);
+    } else if (data === CALLBACKS.oceans_fins) {
+      await ctx.answerCbQuery();
+      let { infos, lastFetched, currentlyFetching } = await getOceanInfos(
+        FINS_ADDRESS,
+        ctx
+      );
+      return sendOceanList(ctx, infos, lastFetched, currentlyFetching);
+    } else if (data === CALLBACKS.oceans_all) {
+      await ctx.answerCbQuery();
+      let { infos, lastFetched, currentlyFetching } = await getOceanInfos(
+        null,
+        ctx
+      );
+      return sendOceanList(ctx, infos, lastFetched, currentlyFetching);
+    } else if (data === CALLBACKS.wallet_check) {
+      let user = await db_getUserInfo(ctx.from.id);
+      await ctx.answerCbQuery();
+      return ctx.reply(
+        user.address ? `Linked wallet: ${user.address}` : getString("NO_WALLET")
+      );
+    } else if (data === CALLBACKS.wallet_link) {
+      await ctx.answerCbQuery();
+      user.botState = "awaiting_wallet";
+      await db_setUserInfo(user);
+      return sendReply(ctx, "ENTER_WALLET");
+    } else if (data === CALLBACKS.wallet_unlink) {
+      await ctx.answerCbQuery();
+      user.address = null;
+      await db_setUserInfo(user);
+      return sendReply(ctx, "WALLET_UNLINKED");
+    } else if (data === CALLBACKS.button_cancel) {
+      if (user.botState === "awaiting_wallet") {
+        user.botState = null;
+        await db_setUserInfo(user);
+        return sendReply(ctx, "CANCELLED");
+      }
+      await ctx.answerCbQuery();
+    }
+
+    // single oceans
+    if (data.startsWith(CALLBACKS.ocean_prefix)) {
+      await ctx.answerCbQuery();
+      let oceanAddress = data.split(CALLBACKS.ocean_prefix)[1];
+      let { infos, lastFetched, currentlyFetching } = await getOceanInfos(
+        null,
+        ctx
+      );
       let info = infos.find((val) =>
         addressesAreEqual(val.address, oceanAddress)
       );
       if (info) {
-        return sendOceanInfo(ctx, info, lastFetched);
+        return sendOceanInfo(ctx, info, lastFetched, currentlyFetching);
       }
       return ctx.reply(`i don't know that ocean`);
     }
@@ -144,7 +262,8 @@ const processCallbackQuery = async (ctx: Context) => {
 const sendOceanList = async (
   ctx: Context,
   infos: OceanInfo[],
-  lastFetched: number
+  lastFetched: number,
+  currentlyFetching?: boolean
 ) => {
   const buttons: any[] = [];
   let msg: string = `<b>Please choose an ocean for more info:</b>\n`;
@@ -154,23 +273,29 @@ const sendOceanList = async (
     buttons.push(
       Markup.button.callback(
         `${info.depositToken} for ${info.earningToken}`,
-        `ocean_${info.address}`
+        `${CALLBACKS.ocean_prefix}${info.address}`
       )
     );
-    msg += `stake ${info.depositToken} for ${info.earningToken}: ${formatNumber(
+    msg += `${info.depositToken} for ${info.earningToken}: ${formatNumber(
       info.apr
     )}% APR (end ~${formatNumber(blocksToDays(info.endsIn))}d)\n`;
   }
-  msg += `data fetched ${relativeTime(lastFetched)}\n`;
+  msg += `\ndata fetched ${relativeTime(lastFetched)}\n`;
+  if (currentlyFetching) msg += `currently fetching...\n`;
 
   return ctx.replyWithHTML(msg, Markup.inlineKeyboard(buttons, { columns: 2 }));
 };
 
-const oceanInfo = async (ctx) => {
-  return ctx.reply("coming soon");
-};
+// const oceanInfo = async (ctx) => {
+//   return ctx.reply("coming soon");
+// };
 
-const sendOceanInfo = async (ctx, info: OceanInfo, lastFetched: number) => {
+const sendOceanInfo = async (
+  ctx,
+  info: OceanInfo,
+  lastFetched: number,
+  currentlyFetching?: boolean
+) => {
   let msg = `<b>stake ${info.depositToken} for ${info.earningToken}:</b>
 Total staked: ${formatNumber(info.totalStaked)} ${info.depositToken}
 ${info.depositToken} price: $${info.depositTokenPrice.toFixed(4)}
@@ -178,15 +303,16 @@ ${info.earningToken} price: $${info.rewardTokenPrice.toFixed(4)}
 TVL: $${formatNumber(info.tvl)}
 APR: ${formatNumber(info.apr)}%
 ends in ~${formatNumber(blocksToDays(info.endsIn))} day(s)
-total reward tokens: ${formatNumber(info.totalRewardTokens)}`;
+total reward tokens: ${formatNumber(info.totalRewardTokens)}\n`;
   let deposits = [100, 500, 1000, 5000, 10000, 50000];
   for (let deposit of deposits) {
     let delta = calculateDepositAprDelta(info.apr, info.totalStaked, deposit);
-    msg += `\nAPR after depositing ${formatInt(deposit)} ${
+    msg += `APR after depositing ${formatInt(deposit)} ${
       info.depositToken
-    }: ${formatNumber(info.apr + delta)}%`;
+    }: ${formatNumber(info.apr + delta)}%\n`;
   }
-  msg += `\ndata fetched ${relativeTime(lastFetched)}`;
+  msg += `\ndata fetched ${relativeTime(lastFetched)}\n`;
+  if (currentlyFetching) msg += `currently fetching...\n`;
 
   return ctx.replyWithHTML(msg);
 };
