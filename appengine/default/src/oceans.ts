@@ -274,14 +274,20 @@ async function getOceanInfosInternal(ctx?: Context) {
   );
   _oceanInfos = await db_getOceansData();
   // sneaky bg fetch
-  fetchOceanData().then(({ infos, fetchDuration }) => {
-    if (ctx)
-      ctx.reply(
-        `Fresh data fetched in ${(fetchDuration / 1000).toFixed(
-          1
-        )}s! See it by sending /start`
-      );
-  });
+  try {
+    fetchOceanData().then(({ infos, fetchDuration }) => {
+      if (ctx)
+        ctx.reply(
+          `Fresh data fetched in ${(fetchDuration / 1000).toFixed(
+            1
+          )}s! See it by sending /start`
+        );
+    });
+  } catch (e) {
+    console.error(
+      "error fetching ocean info\n" + e.toString() + "\n" + e.stack
+    );
+  }
   return _oceanInfos;
 }
 
