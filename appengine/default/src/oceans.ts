@@ -161,7 +161,6 @@ export async function getUserOceans(ctx: Context) {
   const user = await db_getUserInfo(ctx.from.id);
   if (!user.address) {
     // no address!
-    await ctx.reply("no address");
     return null;
   }
   let userOceanInfos: UserOceanInfo[] = [];

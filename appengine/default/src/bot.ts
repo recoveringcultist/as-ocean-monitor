@@ -14,6 +14,7 @@ import {
   JAWS_ADDRESS,
   OceanInfo,
   toChecksumAddress,
+  UserOceanInfo,
 } from "./oceans";
 import { getString, strings } from "./strings";
 
@@ -221,19 +222,9 @@ const processCallbackQuery = async (ctx: Context) => {
       let userOceanInfos = await getUserOceans(ctx);
       await ctx.answerCbQuery();
       if (userOceanInfos != null) {
-        let msg = "Your ocean balances:";
-        let noneFound = true;
-        for (const info of userOceanInfos) {
-          if (info.balance == 0) continue;
-          msg += `${info.oceanTitle}: ${formatNumber(info.balance)} ${
-            info.depositToken
-          } staked ($${formatNumber(info.value)})\n`;
-          noneFound = false;
-        }
-        if (noneFound) {
-          msg += `no baalances found`;
-        }
-        return ctx.reply(msg);
+        return sendUserOceans(ctx, userOceanInfos);
+      } else {
+        return ctx.reply("no address");
       }
     } else if (data === CALLBACKS.wallet_check) {
       let user = await db_getUserInfo(ctx.from.id);
@@ -306,6 +297,28 @@ const sendOceanList = async (
   if (currentlyFetching) msg += `currently fetching...\n`;
 
   return ctx.replyWithHTML(msg, Markup.inlineKeyboard(buttons, { columns: 2 }));
+};
+
+const sendUserOceans = async (ctx: Context, infos: UserOceanInfo[]) => {
+  if (infos != null) {
+    let msg = "<b>Your ocean balances:</b>\n";
+    let noneFound = true;
+    let totalValue = 0;
+    for (const info of infos) {
+      if (info.balance == 0) continue;
+      msg += `${info.oceanTitle}: ${formatNumber(info.balance)} ${
+        info.depositToken
+      } staked ($${formatNumber(info.value)})\n`;
+      totalValue += info.value;
+      noneFound = false;
+    }
+    if (noneFound) {
+      msg += `no balances found\n`;
+    } else {
+      msg += `Total: ($${formatNumber(totalValue)})\n`;
+    }
+    return ctx.replyWithHTML(msg);
+  }
 };
 
 // const oceanInfo = async (ctx) => {
