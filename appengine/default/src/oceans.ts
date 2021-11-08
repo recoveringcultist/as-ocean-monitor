@@ -60,6 +60,7 @@ export interface OceanInfo extends Ocean {
   tokensAddedToReduceAprBy5?: number;
   depositTokenPrice: number;
   rewardTokenPrice: number;
+  title: string;
 }
 
 export interface TokenInfo {
@@ -69,10 +70,22 @@ export interface TokenInfo {
   decimals: number;
 }
 
+export interface UserOceanInfo {
+  oceanAddress: string;
+  oceanTitle: string;
+  balance: number;
+  value: number;
+  depositToken: string;
+  earningToken: string;
+  depositTokenAddress: string;
+  earningTokenAddress: string;
+}
+
 export interface UserInfo {
   id: string;
   botState?: "awaiting_wallet";
   address?: string;
+  userOceans?: UserOceanInfo[];
 }
 
 interface NetworkCacheItem {
@@ -91,6 +104,7 @@ async function getOceans(): Promise<Ocean[]> {
   let data: any = await networkCache(OCEAN_API);
   // let res = await axios.get(OCEAN_API);
   // const oceans: OceanBase[] = (res.data as any).data;
+
   const oceans: OceanBase[] = data.data;
   let filtered = oceans.filter(
     (o) => o.active /*&&
@@ -141,6 +155,45 @@ function cacheIsFresh(lastFetchedMillis: number) {
 
 function secondsAgo(millis: number) {
   return ((Date.now() - millis) / 1000).toFixed(1);
+}
+
+export async function getUserOceans(ctx: Context) {
+  const user = await db_getUserInfo(ctx.from.id);
+  if (!user.address) {
+    // no address!
+    await ctx.reply("no address");
+    return null;
+  }
+  let userOceanInfos: UserOceanInfo[] = [];
+  const infos = await db_getOceansData();
+  for (const o of infos) {
+    let rewardDecimals = await token_decimals(o.earningTokenAddress);
+    let oceanContract = await getOceanContract(o.address);
+    let userInfoRes = await oceanContract.methods.userInfo(user.address).call();
+    let balance = parseFloat(
+      fromWeiDecimals(userInfoRes.amount.toString(), rewardDecimals)
+    );
+    let value = o.depositTokenPrice * balance;
+
+    let userOcean: UserOceanInfo = {
+      oceanAddress: o.address,
+      oceanTitle: o.title,
+      depositToken: o.depositToken,
+      depositTokenAddress: o.depositTokenAddress,
+      earningToken: o.earningToken,
+      earningTokenAddress: o.earningTokenAddress,
+      balance,
+      value,
+    };
+    userOceanInfos.push(userOcean);
+
+    // await ctx.reply(JSON.stringify(userInfoRes));
+  }
+
+  user.userOceans = userOceanInfos;
+  await db_setUserInfo(user);
+
+  return userOceanInfos;
 }
 
 /**
@@ -203,7 +256,7 @@ async function getOceanInfosInternal(ctx?: Context) {
   );
   _oceanInfos = await db_getOceansData();
   // sneaky bg fetch
-  fetchData().then(({ infos, fetchDuration }) => {
+  fetchOceanData().then(({ infos, fetchDuration }) => {
     if (ctx)
       ctx.reply(
         `Fresh data fetched in ${(fetchDuration / 1000).toFixed(
@@ -214,7 +267,7 @@ async function getOceanInfosInternal(ctx?: Context) {
   return _oceanInfos;
 }
 
-async function fetchData() {
+async function fetchOceanData() {
   try {
     // fetch data
     if (_oceanInfos_lastFetch == 0) {
@@ -295,6 +348,10 @@ async function cacheABI(key) {
 
 export function isAddress(address: string) {
   return w3.utils.isAddress(address);
+}
+
+export function toChecksumAddress(address: string) {
+  return w3.utils.toChecksumAddress(address);
 }
 
 export async function getContract(abi: any, address: string) {
@@ -397,12 +454,34 @@ export async function ocean_bonusEndBlock(oceanAddress: string) {
   return parseInt(await contract.methods.bonusEndBlock().call());
 }
 
+/**
+ * get the symbol for a token
+ * @param tokenAddress
+ * @returns
+ */
 export async function token_symbol(tokenAddress: string) {
   const contract = await getTokenContract(tokenAddress);
   let symbol = await contract.methods.symbol().call();
   return symbol;
 }
 
+/**
+ * get the symbol for a token
+ * @param tokenAddress
+ * @returns
+ */
+export async function token_decimals(tokenAddress: string) {
+  const contract = await getTokenContract(tokenAddress);
+  let decimals = await contract.methods.decimals().call();
+  return decimals;
+}
+
+/**
+ * get balance of token as a float, taking into account token decimals might not be 18
+ * @param tokenAddress
+ * @param address
+ * @returns
+ */
 export async function token_balanceOf(tokenAddress: string, address: string) {
   const info = await getTokenInfo(tokenAddress);
   const contract = await getTokenContract(tokenAddress);
@@ -410,6 +489,12 @@ export async function token_balanceOf(tokenAddress: string, address: string) {
   return parseFloat(fromWeiDecimals(balanceOfRes.toString(), info.decimals));
 }
 
+/**
+ * get balance of a token for an address in wei
+ * @param tokenAddress
+ * @param address
+ * @returns
+ */
 export async function token_balanceOfWei(
   tokenAddress: string,
   address: string
@@ -420,18 +505,11 @@ export async function token_balanceOfWei(
   return balanceOfRes.toString();
 }
 
-export function fromWeiDecimals(input: string, decimals: number = 18): string {
-  if (decimals == 18) {
-    return Web3.utils.fromWei(input);
-  } else {
-    const ten = new BN(10);
-    const divisor = ten.pow(new BN(decimals));
-    const numerator: BN = new BN(input);
-    const result = numerator.div(divisor);
-    return result.toString();
-  }
-}
-
+/**
+ * get info about a token from the blockchain
+ * @param tokenAddress
+ * @returns
+ */
 export async function getTokenInfo(tokenAddress: string) {
   const contract = await getTokenContract(tokenAddress);
   let symbol = await contract.methods.symbol().call();
@@ -446,14 +524,27 @@ export async function getTokenInfo(tokenAddress: string) {
   return ret;
 }
 
+/**
+ * convert bigint in string form into float, taking into account token decimals may not be 18
+ * @param input
+ * @param decimals
+ * @returns
+ */
+export function fromWeiDecimals(input: string, decimals: number = 18): string {
+  if (decimals == 18) {
+    return Web3.utils.fromWei(input);
+  } else {
+    const ten = new BN(10);
+    const divisor = ten.pow(new BN(decimals));
+    const numerator: BN = new BN(input);
+    const result = numerator.div(divisor);
+    return result.toString();
+  }
+}
+
 async function getOceanInfo(ocean: Ocean) {
-  // const oceans = await getOceans();
+  let title = ocean.depositToken + " for " + ocean.earningToken;
 
-  // if (which < 0 || which >= oceans.length) {
-  //   throw new Error("invalid ocean id");
-  // }
-
-  // const ocean = oceans[which];
   let totalStakedWei = await token_balanceOfWei(
     ocean.depositTokenAddress,
     ocean.address
@@ -494,6 +585,7 @@ async function getOceanInfo(ocean: Ocean) {
 
   const info: OceanInfo = {
     ...ocean,
+    title,
     tvl: TVL,
     apr: APR,
     totalStaked,

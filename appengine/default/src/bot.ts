@@ -9,9 +9,11 @@ import {
   db_setUserInfo,
   FINS_ADDRESS,
   getOceanInfos,
+  getUserOceans,
   isAddress,
   JAWS_ADDRESS,
   OceanInfo,
+  toChecksumAddress,
 } from "./oceans";
 import { getString, strings } from "./strings";
 
@@ -19,6 +21,7 @@ const CALLBACKS = {
   oceans_jaws: "oceans_jaws",
   oceans_fins: "oceans_fins",
   oceans_all: "oceans_all",
+  oceans_user: "oceans_user",
   ocean_prefix: "ocean_",
   wallet_link: "wallet_link",
   wallet_unlink: "wallet_unlink",
@@ -126,6 +129,7 @@ Available commands:
         Markup.button.callback("JAWS oceans", CALLBACKS.oceans_jaws),
         Markup.button.callback("FINS oceans", CALLBACKS.oceans_fins),
         Markup.button.callback("All oceans", CALLBACKS.oceans_all),
+        Markup.button.callback("User Balances", CALLBACKS.oceans_user),
         Markup.button.callback("Link Wallet", CALLBACKS.wallet_link),
         Markup.button.callback("Unlink Wallet", CALLBACKS.wallet_unlink),
         Markup.button.callback("Check Wallet", CALLBACKS.wallet_check),
@@ -149,7 +153,7 @@ const processText = async (ctx: Context) => {
     if (user.botState === "awaiting_wallet") {
       // set user wallet
       if (isAddress(text)) {
-        user.address = text;
+        user.address = toChecksumAddress(text);
         user.botState = null;
         await db_setUserInfo(user);
         return sendReply(ctx, "WALLET_UPDATED");
@@ -213,6 +217,24 @@ const processCallbackQuery = async (ctx: Context) => {
         ctx
       );
       return sendOceanList(ctx, infos, lastFetched, currentlyFetching);
+    } else if (data === CALLBACKS.oceans_user) {
+      let userOceanInfos = await getUserOceans(ctx);
+      await ctx.answerCbQuery();
+      if (userOceanInfos != null) {
+        let msg = "Your ocean balances:";
+        let noneFound = true;
+        for (const info of userOceanInfos) {
+          if (info.balance == 0) continue;
+          msg += `${info.oceanTitle}: ${formatNumber(info.balance)} ${
+            info.depositToken
+          } staked ($${formatNumber(info.value)})\n`;
+          noneFound = false;
+        }
+        if (noneFound) {
+          msg += `no baalances found`;
+        }
+        return ctx.reply(msg);
+      }
     } else if (data === CALLBACKS.wallet_check) {
       let user = await db_getUserInfo(ctx.from.id);
       await ctx.answerCbQuery();
