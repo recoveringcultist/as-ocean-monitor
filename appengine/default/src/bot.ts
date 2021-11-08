@@ -125,18 +125,27 @@ Available commands:
 /start display this message`;
   return ctx.replyWithHTML(
     msg,
-    Markup.inlineKeyboard(
+    Markup.inlineKeyboard([
       [
         Markup.button.callback("JAWS oceans", CALLBACKS.oceans_jaws),
         Markup.button.callback("FINS oceans", CALLBACKS.oceans_fins),
         Markup.button.callback("All oceans", CALLBACKS.oceans_all),
-        Markup.button.callback("User Balances", CALLBACKS.oceans_user),
-        Markup.button.callback("Link Wallet", CALLBACKS.wallet_link),
-        Markup.button.callback("Unlink Wallet", CALLBACKS.wallet_unlink),
+      ],
+      [
+        Markup.button.callback(
+          "Link Wallet",
+          CALLBACKS.wallet_link,
+          !!user.address
+        ),
+        Markup.button.callback(
+          "Unlink Wallet",
+          CALLBACKS.wallet_unlink,
+          !user.address
+        ),
         Markup.button.callback("Check Wallet", CALLBACKS.wallet_check),
       ],
-      { columns: 2 }
-    )
+      [Markup.button.callback("User Balances", CALLBACKS.oceans_user)],
+    ])
   );
 };
 

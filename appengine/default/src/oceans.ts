@@ -104,8 +104,27 @@ async function getOceans(): Promise<Ocean[]> {
   let data: any = await networkCache(OCEAN_API);
   // let res = await axios.get(OCEAN_API);
   // const oceans: OceanBase[] = (res.data as any).data;
+  let success = data.data != null;
+  let oceans: OceanBase[] = data.data;
+  let retries = 0;
 
-  const oceans: OceanBase[] = data.data;
+  while (!success) {
+    data = await networkCache(OCEAN_API, true);
+    success = data.data != null;
+    oceans = data.data;
+    if (!success) {
+      console.log(
+        `getOceans: problem fetching, retries=${retries}: ` +
+          JSON.stringify(data)
+      );
+    }
+    retries++;
+
+    if (retries >= 3) {
+      throw new Error("Problem fetching oceans, please try again later");
+    }
+  }
+
   let filtered = oceans.filter(
     (o) => o.active /*&&
       addressesIsIn(o.depositTokenAddress, [JAWS_ADDRESS, FINS_ADDRESS])*/
@@ -172,19 +191,21 @@ export async function getUserOceans(ctx: Context) {
     let balance = parseFloat(
       fromWeiDecimals(userInfoRes.amount.toString(), rewardDecimals)
     );
-    let value = o.depositTokenPrice * balance;
 
-    let userOcean: UserOceanInfo = {
-      oceanAddress: o.address,
-      oceanTitle: o.title,
-      depositToken: o.depositToken,
-      depositTokenAddress: o.depositTokenAddress,
-      earningToken: o.earningToken,
-      earningTokenAddress: o.earningTokenAddress,
-      balance,
-      value,
-    };
-    userOceanInfos.push(userOcean);
+    if (balance > 0) {
+      let value = o.depositTokenPrice * balance;
+      let userOcean: UserOceanInfo = {
+        oceanAddress: o.address,
+        oceanTitle: o.title,
+        depositToken: o.depositToken,
+        depositTokenAddress: o.depositTokenAddress,
+        earningToken: o.earningToken,
+        earningTokenAddress: o.earningTokenAddress,
+        balance,
+        value,
+      };
+      userOceanInfos.push(userOcean);
+    }
 
     // await ctx.reply(JSON.stringify(userInfoRes));
   }
@@ -225,11 +246,9 @@ async function getOceanInfosInternal(ctx?: Context) {
   _oceanInfos_lastFetch = await db_getLastFetched();
 
   if (_currentlyFetching) {
-    // stuck fetching for an hour or more? fetch fresh
-    if (Date.now() - _oceanInfos_lastFetch > 1000 * 60 * 60) {
-      console.log(
-        "getOceanInfos: stuck fetching for over an hour, fetching fresh"
-      );
+    // stuck fetching for long time? fetch fresh
+    if (Date.now() - _oceanInfos_lastFetch > 1000 * 60 * 5) {
+      console.log(`getOceanInfos: stuck fetching for awhile, fetching fresh`);
       _currentlyFetching = false;
     } else {
       console.log("getOceanInfos: still fetching, returning previous data");
@@ -316,9 +335,10 @@ export async function getTokenABI() {
   return cacheABI(key);
 }
 
-async function networkCache(url) {
+async function networkCache(url, force = false) {
   // return cached data if still fresh
   if (
+    !force &&
     _networkCache[url] &&
     cacheIsFresh(_networkCache[url].lastFetchedMillis)
   ) {
